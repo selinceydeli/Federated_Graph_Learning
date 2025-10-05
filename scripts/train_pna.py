@@ -4,38 +4,16 @@ import random
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from torch_geometric.nn import PNAConv, BatchNorm, global_mean_pool
-from torch_geometric.loader import DataLoader
 from torch_geometric.utils import degree
 
-from utils.gcn_utils import GraphData  
 from utils.metrics import append_f1_score_to_csv
-
-
-'''
-The PNANet class described in this script is defined based on the following paper:
-https://arxiv.org/pdf/2004.05718
-
-The PNANetdefinition is adapted based on the configurations specified in the
-Provably Powerful GNNs paper:
-https://arxiv.org/abs/2306.11586
-'''
+from utils.seed import set_seed
+from models.pna_baseline import PNANet
 
 BEST_MODEL_PATH = "./checkpoints/pna_baseline"
-
-def set_seed(seed):
-    '''
-    Set the same seed across all processes.
-    '''
-    torch.backends.cudnn.deterministic = True    
-    random.seed(seed)                 
-    np.random.seed(seed)              
-    torch.manual_seed(seed)            
-    torch.cuda.manual_seed_all(seed)   
-
-
-def load_datasets(log_dir="./data", train_data_file="train.pt", val_data_file="val.pt", test_data_file="test.pt"):
+DATA_PATH = "./data"
+ 
+def load_datasets(log_dir=DATA_PATH, train_data_file="train.pt", val_data_file="val.pt", test_data_file="test.pt"):
     train = torch.load(os.path.join(log_dir, train_data_file), weights_only=False, map_location="cpu")
     val= torch.load(os.path.join(log_dir, val_data_file), weights_only=False, map_location="cpu")
     test = torch.load(os.path.join(log_dir, test_data_file), weights_only=False, map_location="cpu")
@@ -89,46 +67,6 @@ def compute_minority_f1_score_per_task(logits, labels, threshold=0.5):
         f1_scores[c] = f1
 
     return f1_scores
-
-
-class PNANet(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, deg, num_layers=6, dropout=0.1):
-        super().__init__()
-
-        aggregators = ['mean', 'min', 'max', 'std']
-        scalers = ['amplification', 'attenuation', 'identity']
-
-        self.input = nn.Linear(in_dim, hidden_dim)
-
-        # 6 layers of PNAConv and BatchNorm to ensure up to 6-hop message passing 
-        # because I want to predict cycles up to length 6
-        self.convs = nn.ModuleList([
-            PNAConv(hidden_dim, hidden_dim, aggregators, scalers, deg=deg,
-                    towers=4, pre_layers=1, post_layers=1, divide_input=False)
-            for _ in range(num_layers)
-        ])
-
-        self.bns = nn.ModuleList([BatchNorm(hidden_dim) for _ in range(num_layers)])
-        
-        self.dropout = dropout
-
-        self.mlp = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, out_dim) # define per-node logits (because my labels are per-node - so I want to predict per-node labels)
-        )
-        
-
-    def forward(self, x, edge_index, batch=None):
-        x = F.relu(self.input(x))
-        for conv, bn in zip(self.convs, self.bns):
-            # Define a convolution and batch norm for each layer
-            x = conv(x, edge_index)
-            x = bn(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-        
-        return self.mlp(x) # [num_nodes, out_dim]
 
 
 def train_epoch(model, loader, optimizer, criterion, device):
@@ -202,12 +140,12 @@ def run_pna(seed, device):
     test_data = ensure_node_features(test_data)
 
     d = degree(train_data.edge_index[1], num_nodes=train_data.num_nodes).long()
-    deg = torch.bincount(d, minlength=int(d.max()) + 1)
+    deg_hist = torch.bincount(d, minlength=int(d.max()) + 1)
 
     # Define the model
     in_dim = train_data.num_node_features if train_data.x is not None else 1
     out_dim = train_data.y.size(-1)
-    model = PNANet(in_dim, hidden_dim=64, out_dim=out_dim, deg=deg, num_layers=6, dropout=0.1).to(device)
+    model = PNANet(in_dim, hidden_dim=64, out_dim=out_dim, deg=deg_hist, num_layers=6, dropout=0.1).to(device)
 
     # Load the datasets
     # Note: Because we currently have only 1 graph per split, there is no need for batching.
