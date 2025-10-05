@@ -15,7 +15,7 @@ The PNANet class described in this script is defined based on the following pape
 https://arxiv.org/pdf/2004.05718
 '''
 
-BEST_MODEL_PATH = "./logs/model_seeds"
+BEST_MODEL_PATH = "./checkpoints/pna_baseline"
 BEST_MODEL_NAME = "best_pna_v1.pt"
 
 def load_datasets(log_dir="./data", train_data_file="train.pt", val_data_file="val.pt", test_data_file="test.pt"):

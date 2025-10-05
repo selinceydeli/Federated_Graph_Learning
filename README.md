@@ -11,7 +11,8 @@ This repository includes a **synthetic subgraph-detection dataset** used for ben
 
   - `train.pt`, `val.pt`, `test.pt` objects with node-level labels
   - `y_sums.csv` — per-split counts of positive labels per sub-task
-  - `label_percentages.csv` — per-split label percentages and mean across splits, useful to sanity-check against the paper’s reported marginals
+
+- Per-split label percentages and mean across splits are stored under `./results/metrics/`, useful to sanity-check against the paper’s reported marginals
 
 Each node is labeled for the presence of the following patterns (11 sub-tasks):
 
@@ -54,4 +55,4 @@ From the repo root:
 python3 generate_synthetic.py
 ```
 
-After step (1), you’ll find `train.pt`, `val.pt`, `test.pt`, `y_sums.csv`, and `label_percentages.csv` under `./data/`.
+After step (1), you’ll find `train.pt`, `val.pt`, `test.pt`, and `y_sums.csv` under `./data/`. The `label_percentages.csv` will be saved under `./results/metrics/`.

@@ -10,7 +10,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.utils import degree
 
 from utils.gcn_utils import GraphData  
-from utils.helper_methods import append_f1_score_to_csv
+from utils.metrics import append_f1_score_to_csv
 
 
 '''
@@ -22,8 +22,7 @@ Provably Powerful GNNs paper:
 https://arxiv.org/abs/2306.11586
 '''
 
-BEST_MODEL_PATH = "./logs/model_seeds"
-
+BEST_MODEL_PATH = "./checkpoints/pna_baseline"
 
 def set_seed(seed):
     '''
@@ -264,7 +263,7 @@ def main():
 
     # Append F1 scores to CSV
     append_f1_score_to_csv(
-        out_csv="./results/f1_scores.csv",
+        out_csv="./results/metrics/f1_scores.csv",
         tasks=tasks,
         mean_f1=mean_f1,
         std_f1=std_f1,
