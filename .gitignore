@@ -2,3 +2,4 @@ __pycache__/
 .DS_Store
 gcn_utils.py
 simulator.py
+scripts/pna_baseline_v1.py
