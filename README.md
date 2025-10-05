@@ -37,7 +37,7 @@ Graph instances are **reproducible**. A single `BASE_SEED` deterministically der
 
 ### Default generation settings
 
-The default config (see the generator script `generate_synthetic.py`) follows the paper’s setup:
+The default config (see the generator script `scripts/generate_synthetic.py`) follows the paper’s setup:
 
 - Nodes `n = 8192`
 - Average degree `d = 6`
@@ -52,7 +52,20 @@ From the repo root:
 
 ```bash
 # 1) Generate graphs and labels
-python3 generate_synthetic.py
+python3 -m scripts.generate_synthetic
 ```
 
 After step (1), you’ll find `train.pt`, `val.pt`, `test.pt`, and `y_sums.csv` under `./data/`. The `label_percentages.csv` will be saved under `./results/metrics/`.
+
+## Principal Neighborhood Aggregation (PNA)
+
+PNA model is implemented by following the model architecture described in _Principal Neighbourhood Aggregation for Graph Nets_ (Corso et al.).
+
+### How to train the model
+
+From the repo root:
+
+```bash
+# 2) Train and test PNA model on the generated graph data
+python3 -m scripts.pna_baseline_v2
+```
