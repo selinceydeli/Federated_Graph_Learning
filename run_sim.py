@@ -11,6 +11,7 @@ from simulator import (
     Cn_check, SG2_check, BP2_check,   
 )
 from utils.gcn_utils import GraphData  
+from utils.label_percentages import compute_label_percentages
 
 # Print logs on the terminal screen
 logging.basicConfig(level=logging.INFO, format="%(levelname)s:%(message)s")
@@ -142,6 +143,14 @@ def main():
     # Log label stats for sanity check
     write_label_stats(os.path.join(out_dir, "y_sums.csv"), names, [tr, va, te])
     logging.info("Wrote label totals to %s", os.path.join(out_dir, "y_sums.csv"))
+
+    # Compute label percentages
+    compute_label_percentages(
+        input_csv=os.path.join(out_dir, "y_sums.csv"),
+        output_csv=os.path.join(out_dir, "label_percentages.csv"),
+        add_mean=True,
+    )
+    logging.info("Wrote label percentages to %s", os.path.join(out_dir, "label_percentages.csv"))
     
     torch.save(tr, os.path.join(out_dir, "train.pt"))
     torch.save(va, os.path.join(out_dir, "val.pt"))

@@ -1,4 +1,4 @@
 __pycache__/
 .DS_Store
-utils/
+gcn_utils.py
 simulator.py
