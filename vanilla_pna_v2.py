@@ -10,6 +10,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.utils import degree
 
 from utils.gcn_utils import GraphData  
+from utils.helper_methods import append_f1_score_to_csv
 
 
 '''
@@ -260,6 +261,17 @@ def main():
 
     row = " | ".join(f"{n}: {100*m:.2f}±{100*s:.2f}%" for n, m, s in zip(tasks, mean_f1.tolist(), std_f1.tolist()))
     print("Per-task (mean±std over 5 runs):", row)
+
+    # Append F1 scores to CSV
+    append_f1_score_to_csv(
+        out_csv="./results/f1_scores.csv",
+        tasks=tasks,
+        mean_f1=mean_f1,
+        std_f1=std_f1,
+        macro_mean_percent=macro_mean,
+        seeds=seeds,
+        model_name="PNA baseline",
+    )
 
 
 if __name__ == "__main__":
