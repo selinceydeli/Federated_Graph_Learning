@@ -6,9 +6,9 @@ from torch_geometric.utils import degree
 
 from utils.metrics import append_f1_score_to_csv
 from utils.seed import set_seed
-from models.pna_baseline import PNANet
+from models.pna_reverse_mp import PNANet
 
-BEST_MODEL_PATH = "./checkpoints/pna_baseline"
+BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
 DATA_PATH = "./data"
  
 def load_datasets(log_dir=DATA_PATH, train_data_file="train.pt", val_data_file="val.pt", test_data_file="test.pt"):
@@ -217,7 +217,7 @@ def main():
     std_f1  = all_f1.std(dim=0, unbiased=False)
 
     macro_mean = mean_f1.mean().item()*100
-    print(f"\nPNA baseline — macro minority F1 over 5 runs: {macro_mean:.2f}%")
+    print(f"\nPNA reverse message passing — macro minority F1 over 5 runs: {macro_mean:.2f}%")
 
     row = " | ".join(f"{n}: {100*m:.2f}±{100*s:.2f}%" for n, m, s in zip(tasks, mean_f1.tolist(), std_f1.tolist()))
     print("Per-task (mean±std over 5 runs):", row)
@@ -230,7 +230,7 @@ def main():
         std_f1=std_f1,
         macro_mean_percent=macro_mean,
         seeds=seeds,
-        model_name="PNA baseline",
+        model_name="PNA reverse message passing",
     )
 
 
