@@ -67,5 +67,5 @@ From the repo root:
 
 ```bash
 # 2) Train and test PNA model on the generated graph data
-python3 -m scripts.train_pna
+python3 -m scripts.train_pna_reverse_mp
 ```
