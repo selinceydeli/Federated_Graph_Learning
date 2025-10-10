@@ -4,15 +4,16 @@ import torch
 import torch.nn as nn
 from torch_geometric.utils import degree
 
-from utils.metrics import append_f1_score_to_csv
+from utils.metrics import append_f1_score_to_csv, start_epoch_csv, append_epoch_csv
 from utils.seed import set_seed
 from utils.train_utils import load_datasets, ensure_node_features, train_epoch, evaluate_epoch
 from models.pna_reverse_mp import PNANet
 
 BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
+MODEL_NAME = "pna_reverse_mp"
  
  
-def run_pna(seed, device):
+def run_pna(seed, tasks, device):
     set_seed(seed)
 
     train_data, val_data, test_data = load_datasets()
@@ -67,11 +68,24 @@ def run_pna(seed, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4) # Define optimizer as Adam
     criterion = nn.BCEWithLogitsLoss() # Define loss as binary cross-entropy (preferred for multi-label classification task we have here)
 
+    # Log the epoch results
+    os.makedirs(BEST_MODEL_PATH, exist_ok=True)
+
+    epoch_csv_path = start_epoch_csv(
+        model_name=MODEL_NAME,
+        seed=seed,
+        tasks=tasks,
+        out_dir=f"./results/metrics/epoch_logs/{MODEL_NAME}"
+    )
+
     # Training loop
     best_val = float("inf")
     for epoch in range(1, 101):  # a few more epochs helps stabilize F1
         train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
         val_loss, _, val_f1 = evaluate_epoch(model, valid_loader, criterion, device)
+
+        append_epoch_csv(epoch_csv_path, epoch, train_loss, val_loss, val_f1)
+
         val_macro = val_f1.mean().item()
 
         if val_loss < best_val:
@@ -96,7 +110,7 @@ def main():
     seeds = [0,1,2,3,4]
     test_f1_scores = []
     for s in seeds:
-        _, test_f1 = run_pna(s, device)
+        _, test_f1 = run_pna(s, tasks, device)
         test_f1_scores.append(test_f1.cpu())
 
     all_f1 = torch.stack(test_f1_scores, dim=0)        

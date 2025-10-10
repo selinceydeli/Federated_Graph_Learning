@@ -82,3 +82,48 @@ def append_f1_score_to_csv(
         if not file_exists:
             w.writeheader()
         w.writerow(row)
+
+
+def start_epoch_csv(model_name: str,
+                    seed: int,
+                    tasks: list,
+                    out_dir: str = "./results/metrics/epoch_logs") -> str:
+    """
+    Creates a timestamped CSV for per-epoch metrics and writes the header.
+    Returns the full path to the CSV file.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+    fname = f"{ts}_{model_name}_seed{seed}.csv"
+    path = os.path.join(out_dir, fname)
+
+    header = ["epoch", "train_loss", "val_loss", "val_macro_minF1"] + [f"val_{t}_minF1" for t in tasks]
+
+    with open(path, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow([f"# model_name={model_name}"])
+        w.writerow([f"# seed={seed}"])
+        w.writerow([f"# started_at={ts}"])
+        w.writerow(header)
+
+    return path
+
+
+def append_epoch_csv(csv_path: str,
+                     epoch: int,
+                     train_loss: float,
+                     val_loss: float,
+                     val_f1_tensor) -> None:
+    """
+    Appends a single epoch row to the CSV. val_f1_tensor is shape [num_tasks].
+    """
+    if hasattr(val_f1_tensor, "detach"):
+        vals = val_f1_tensor.detach().cpu().tolist()
+    else:
+        vals = list(val_f1_tensor)
+    macro = float(sum(vals) / len(vals))
+
+    row = [int(epoch), float(train_loss), float(val_loss), float(macro)] + [float(v) for v in vals]
+
+    with open(csv_path, "a", newline="") as f:
+        csv.writer(f).writerow(row)
