@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import os
-import random
-import numpy as np
 import torch
 import torch.nn as nn
 from torch_geometric.utils import degree
@@ -139,13 +137,38 @@ def run_pna(seed, device):
     val_data = ensure_node_features(val_data)
     test_data = ensure_node_features(test_data)
 
-    d = degree(train_data.edge_index[1], num_nodes=train_data.num_nodes).long()
-    deg_hist = torch.bincount(d, minlength=int(d.max()) + 1)
+    # Create degree histograms in both directions
+    # Forward direction: message along original edges
+    d_fwd = degree(train_data.edge_index[1], num_nodes=train_data.num_nodes).long()
+    deg_fwd = torch.bincount(d_fwd, minlength=int(d_fwd.max()) + 1)
+
+    # Backward direction: message along reversed edges
+    reverse_index = train_data.edge_index[[1, 0], :]
+    d_bwd = degree(reverse_index[1], num_nodes=train_data.num_nodes).long()
+    deg_bwd = torch.bincount(d_bwd, minlength=int(d_bwd.max()) + 1)
 
     # Define the model
     in_dim = train_data.num_node_features if train_data.x is not None else 1
     out_dim = train_data.y.size(-1)
-    model = PNANet(in_dim, hidden_dim=64, out_dim=out_dim, deg=deg_hist, num_layers=6, dropout=0.1).to(device)
+
+    # Define the layers
+    num_layers = 6
+    forward_num = num_layers // 2
+    backward_num = num_layers - forward_num
+
+    direction_schedule = ["forward"] * forward_num + ["backward"] * backward_num
+    print("Direction schedule:", direction_schedule)
+    
+    model = PNANet(
+        in_dim=in_dim,
+        hidden_dim=64,
+        out_dim=out_dim,
+        deg_forward=deg_fwd,
+        deg_backward=deg_bwd,
+        num_layers=6,
+        dropout=0.1,
+        direction_schedule=direction_schedule,
+    ).to(device)
 
     # Load the datasets
     # Note: Because we currently have only 1 graph per split, there is no need for batching.

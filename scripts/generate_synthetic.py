@@ -2,8 +2,6 @@
 import os
 import logging
 import torch
-import numpy as np
-import random
 
 from simulator import (
     GraphSimulator,
