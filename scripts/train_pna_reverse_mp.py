@@ -6,76 +6,18 @@ from torch_geometric.utils import degree
 
 from utils.metrics import append_f1_score_to_csv
 from utils.seed import set_seed
-from utils.train_utils import load_datasets, ensure_node_features, compute_minority_f1_score_per_task
+from utils.train_utils import load_datasets, ensure_node_features, train_epoch, evaluate_epoch
 from models.pna_reverse_mp import PNANet
 
 BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
  
  
-def train_epoch(model, loader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0.0
-    total_nodes = 0
-
-    for data in loader:
-        data = data.to(device)
-        optimizer.zero_grad()
-
-        out = model(data.x, data.edge_index) # Forward pass
-        loss = criterion(out, data.y.float())  # Binary cross-entropy loss for multi-label
-        loss.backward()
-        optimizer.step()
-        
-        total_loss  += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
-
-    # Take the mean loss per node, per task
-    average_loss = total_loss / max(total_nodes, 1)
-
-    return average_loss
-
-
-@torch.no_grad()
-def evaluate_epoch(model, loader, criterion, device):
-    model.eval()
-
-    total_loss = 0.0
-    total_nodes = 0
-    total_pairs = 0
-    correct_pairs = 0
-
-    all_logits = []
-    all_labels = []
-
-    for data in loader:
-        data = data.to(device)
-        out = model(data.x, data.edge_index)            
-        loss = criterion(out, data.y.float())    
-
-        total_loss += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
-
-        preds = (torch.sigmoid(out) > 0.5) # Turn logits into binary predictions
-        correct_pairs += (preds == data.y.bool()).sum().item()
-        total_pairs += data.y.numel()
-
-        all_logits.append(out)
-        all_labels.append(data.y)
-
-    avg_loss = total_loss / max(total_nodes, 1)
-    per_node_acc = correct_pairs / max(total_pairs, 1)  
-
-    logits = torch.cat(all_logits, dim=0)
-    labels = torch.cat(all_labels, dim=0)
-    f1_score_per_task = compute_minority_f1_score_per_task(logits, labels)
-
-    return avg_loss, per_node_acc, f1_score_per_task
-
-
 def run_pna(seed, device):
     set_seed(seed)
 
     train_data, val_data, test_data = load_datasets()
+
+    # TODO: convert your graph into a heterogeneous graph
 
     # Assign constant features
     train_data = ensure_node_features(train_data)

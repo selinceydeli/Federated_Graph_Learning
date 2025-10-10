@@ -8,69 +8,10 @@ from torch_geometric.utils import degree
 
 from utils.metrics import append_f1_score_to_csv
 from utils.seed import set_seed
-from utils.train_utils import load_datasets, ensure_node_features, compute_minority_f1_score_per_task, make_reverse_neighbor_loader
+from utils.train_utils import load_datasets, ensure_node_features, train_epoch, evaluate_epoch
 from models.pna_baseline import PNANet
 
 BEST_MODEL_PATH = "./checkpoints/pna_baseline"
-
-def train_epoch(model, loader, optimizer, criterion, device):
-    model.train()
-    total_loss = 0.0
-    total_nodes = 0
-
-    for data in loader:
-        data = data.to(device)
-        optimizer.zero_grad()
-
-        out = model(data.x, data.edge_index) # Forward pass
-        loss = criterion(out, data.y.float())  # Binary cross-entropy loss for multi-label
-        loss.backward()
-        optimizer.step()
-        
-        total_loss  += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
-
-    # Take the mean loss per node, per task
-    average_loss = total_loss / max(total_nodes, 1)
-
-    return average_loss
-
-
-@torch.no_grad()
-def evaluate_epoch(model, loader, criterion, device):
-    model.eval()
-
-    total_loss = 0.0
-    total_nodes = 0
-    total_pairs = 0
-    correct_pairs = 0
-
-    all_logits = []
-    all_labels = []
-
-    for data in loader:
-        data = data.to(device)
-        out = model(data.x, data.edge_index)            
-        loss = criterion(out, data.y.float())    
-
-        total_loss += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
-
-        preds = (torch.sigmoid(out) > 0.5) # Turn logits into binary predictions
-        correct_pairs += (preds == data.y.bool()).sum().item()
-        total_pairs += data.y.numel()
-
-        all_logits.append(out)
-        all_labels.append(data.y)
-
-    avg_loss = total_loss / max(total_nodes, 1)
-    per_node_acc = correct_pairs / max(total_pairs, 1)  
-
-    logits = torch.cat(all_logits, dim=0)
-    labels = torch.cat(all_labels, dim=0)
-    f1_score_per_task = compute_minority_f1_score_per_task(logits, labels)
-
-    return avg_loss, per_node_acc, f1_score_per_task
 
 
 def run_pna(seed, device):
@@ -100,10 +41,9 @@ def run_pna(seed, device):
 
     # Load the datasets
     # Note: Because we currently have only 1 graph per split, there is no need for batching.
-    train_loader = make_reverse_neighbor_loader(train_data, num_neighbors=[15,10,5], batch_size=2048, shuffle=True)
-    valid_loader = make_reverse_neighbor_loader(val_data,   num_neighbors=[15,10,5], batch_size=4096, shuffle=False)
-    test_loader  = make_reverse_neighbor_loader(test_data,  num_neighbors=[15,10,5], batch_size=4096, shuffle=False)
-
+    train_loader = [train_data]
+    valid_loader = [val_data]
+    test_loader  = [test_data]
 
     # Define optimizer and loss functions
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4) # Define optimizer as Adam
@@ -159,7 +99,7 @@ def main():
         std_f1=std_f1,
         macro_mean_percent=macro_mean,
         seeds=seeds,
-        model_name="PNA baseline with reverse sampling",
+        model_name="PNA baseline",
     )
 
 

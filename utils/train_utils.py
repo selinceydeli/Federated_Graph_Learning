@@ -1,7 +1,6 @@
 import os
 import torch
 from torch_geometric.loader import NeighborLoader
-from torch_geometric.utils import subgraph
 import copy
 
 DATA_PATH = "./data"
@@ -82,3 +81,62 @@ def make_reverse_neighbor_loader(data, num_neighbors=[15, 10, 5], batch_size=204
     loader._num_nodes_full = data.num_nodes
     return loader
 
+
+def train_epoch(model, loader, optimizer, criterion, device):
+    model.train()
+    total_loss = 0.0
+    total_nodes = 0
+
+    for data in loader:
+        data = data.to(device)
+        optimizer.zero_grad()
+
+        out = model(data.x, data.edge_index) # Forward pass
+        loss = criterion(out, data.y.float())  # Binary cross-entropy loss for multi-label
+        loss.backward()
+        optimizer.step()
+        
+        total_loss  += loss.item() * int(data.num_nodes)
+        total_nodes += int(data.num_nodes)
+
+    # Take the mean loss per node, per task
+    average_loss = total_loss / max(total_nodes, 1)
+
+    return average_loss
+
+
+@torch.no_grad()
+def evaluate_epoch(model, loader, criterion, device):
+    model.eval()
+
+    total_loss = 0.0
+    total_nodes = 0
+    total_pairs = 0
+    correct_pairs = 0
+
+    all_logits = []
+    all_labels = []
+
+    for data in loader:
+        data = data.to(device)
+        out = model(data.x, data.edge_index)            
+        loss = criterion(out, data.y.float())    
+
+        total_loss += loss.item() * int(data.num_nodes)
+        total_nodes += int(data.num_nodes)
+
+        preds = (torch.sigmoid(out) > 0.5) # Turn logits into binary predictions
+        correct_pairs += (preds == data.y.bool()).sum().item()
+        total_pairs += data.y.numel()
+
+        all_logits.append(out)
+        all_labels.append(data.y)
+
+    avg_loss = total_loss / max(total_nodes, 1)
+    per_node_acc = correct_pairs / max(total_pairs, 1)  
+
+    logits = torch.cat(all_logits, dim=0)
+    labels = torch.cat(all_labels, dim=0)
+    f1_score_per_task = compute_minority_f1_score_per_task(logits, labels)
+
+    return avg_loss, per_node_acc, f1_score_per_task
