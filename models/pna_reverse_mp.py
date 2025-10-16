@@ -1,29 +1,28 @@
 #!/usr/bin/env python3
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import PNAConv, BatchNorm
+from torch_geometric.nn import HeteroConv, PNAConv, BatchNorm
+from torch_geometric.utils import degree
 
-'''
-The PNANet class described in this script is defined based on the following paper:
-https://arxiv.org/pdf/2004.05718
+__all__ = ["PNANetReverseMP"]
 
-The PNANet definition is adapted based on the configurations specified in the
-Provably Powerful GNNs paper:
-https://arxiv.org/abs/2306.11586
-'''
-
-__all__ = ["PNANet"]
-
-
-class PNANet(nn.Module):
+class PNANetReverseMP(nn.Module):
+    """
+    Single node type 'n' with two relations:
+      ('n','fwd','n') uses PNA with in-degree histogram of the original graph.
+      ('n','rev','n') uses PNA with in-degree histogram of the reversed graph
+                      (= out-degree histogram of the original graph).
+    We combine both directions via HeteroConv(..., aggr='sum').
+    """
     def __init__(
         self,
         in_dim: int,
         hidden_dim: int,
         out_dim: int,
-        deg_forward,                # degree histogram tensor for forward edges
-        deg_backward,               # degree histogram tensor for reversed edges
-        num_layers: int = 6,        # use 6 convolution layers to capture the neighborhood for 6-cycles
+        deg_fwd,  # histogram for in-degrees w.r.t. fwd edges
+        deg_rev,  # histogram for in-degrees w.r.t. rev edges
+        num_layers: int = 6,
         dropout: float = 0.1,
         aggregators=None,
         scalers=None,
@@ -31,69 +30,89 @@ class PNANet(nn.Module):
         pre_layers: int = 1,
         post_layers: int = 1,
         divide_input: bool = False,
-        direction_schedule=None,    # I will use ["forward"]*3 + ["backward"]*3 to capture the neighborhood
+        combine: str = "sum",   # how to combine relations in HeteroConv - possible values: 'sum', 'mean', or 'max'
     ):
         super().__init__()
-
-        aggregators = ['mean', 'min', 'max', 'std']
-        scalers = ['amplification', 'attenuation', 'identity']
-
-        if direction_schedule is None:
-            k = num_layers // 2
-            direction_schedule = (["forward"] * k) + (["backward"] * (num_layers - k))
-        assert len(direction_schedule) == num_layers, "direction_schedule length must equal num_layers"
-        self.direction_schedule = direction_schedule
-
-        self.input = nn.Linear(in_dim, hidden_dim)
-
         if aggregators is None:
             aggregators = ["mean", "min", "max", "std"]
         if scalers is None:
             scalers = ["amplification", "attenuation", "identity"]
 
         self.input = nn.Linear(in_dim, hidden_dim)
+        self.dropout = dropout
 
-        # num_layers of the form: PNAConv -> BN -> ReLU -> Dropout 
         self.convs = nn.ModuleList()
-        for i in range(num_layers):
-            # Select the convolution direction for this layer
-            use_deg = deg_forward if direction_schedule[i] == "forward" else deg_backward
-            self.convs.append(
-                PNAConv(
+        self.bns   = nn.ModuleList()
+
+        for _ in range(num_layers):
+            conv_dict = {
+                # Define PNA with in-degree histogram of the original graph.
+                ('n','fwd','n'): PNAConv(
                     in_channels=hidden_dim,
                     out_channels=hidden_dim,
                     aggregators=aggregators,
                     scalers=scalers,
-                    deg=use_deg,
+                    deg=deg_fwd,    # histogram for in-degrees w.r.t. fwd edges
                     towers=towers,
                     pre_layers=pre_layers,
                     post_layers=post_layers,
                     divide_input=divide_input,
-                )
-            )
-
-        self.bns = nn.ModuleList([BatchNorm(hidden_dim) for _ in range(num_layers)])
-        self.dropout = dropout
+                ),
+                # Define PNA with in-degree histogram of the reversed graph.
+                ('n','rev','n'): PNAConv(
+                    in_channels=hidden_dim,
+                    out_channels=hidden_dim,
+                    aggregators=aggregators,
+                    scalers=scalers,
+                    deg=deg_rev,    # histogram for in-degrees w.r.t. rev edges
+                    towers=towers,
+                    pre_layers=pre_layers,
+                    post_layers=post_layers,
+                    divide_input=divide_input,
+                ),
+            }
+            self.convs.append(HeteroConv(conv_dict, aggr=combine))
+            self.bns.append(BatchNorm(hidden_dim))  # one BN per layer
 
         self.mlp = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim, out_dim) # define per-node logits (because my labels are per-node - so I want to predict per-node labels)
+            nn.Linear(hidden_dim, out_dim),  # per-node logits
         )
-        
 
-    def forward(self, x, edge_index, edge_index_rev=None, batch=None):
-        if edge_index_rev is None:
-            # swap rows: [2, E] -> reversed direction
-            edge_index_rev = edge_index[[1, 0], :]
+    @torch.no_grad()
+    def _ensure_dicts(self, x_dict, edge_index_dict):
+        # Convenience: allow passing homogeneous x & edge_index via ('n','*','n')
+        if isinstance(x_dict, torch.Tensor):
+            x_dict = {'n': x_dict}
+        return x_dict, edge_index_dict
 
+    def forward(self, x_dict, edge_index_dict):
+        x_dict, edge_index_dict = self._ensure_dicts(x_dict, edge_index_dict)
+
+        x = x_dict['n']
         x = F.relu(self.input(x))
-        for i, (conv, bn) in enumerate(zip(self.convs, self.bns)):
-            edge_idx = edge_index if self.direction_schedule[i] == "forward" else edge_index_rev
-            x = conv(x, edge_idx)
+
+        for conv, bn in zip(self.convs, self.bns):
+            # HeteroConv expects dicts
+            out_dict = conv({'n': x}, edge_index_dict)
+            x = out_dict['n']
             x = bn(x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout, training=self.training)
+
         return self.mlp(x)
-    
-    
+
+
+def compute_directional_degree_hists(edge_index, num_nodes):
+    """
+    Returns (deg_fwd_hist, deg_rev_hist):
+      deg_fwd uses in-degree wrt original edges (target = edge_index[1]).
+      deg_rev uses in-degree wrt reversed edges, i.e. out-degree of original (source = edge_index[0]).
+    """
+    d_fwd = degree(edge_index[1], num_nodes=num_nodes).long()
+    d_rev = degree(edge_index[0], num_nodes=num_nodes).long()
+
+    dfh = torch.bincount(d_fwd, minlength=int(d_fwd.max()) + 1)
+    drh = torch.bincount(d_rev, minlength=int(d_rev.max()) + 1)
+    return dfh, drh

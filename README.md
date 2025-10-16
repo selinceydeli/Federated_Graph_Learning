@@ -1,10 +1,12 @@
 # Federated_Graph_Learning
 
+A repository for **synthetic subgraph-detection** benchmarking and **PNA** baselines on directed multigraphs.
+
 ## Synthetic Graph Generation
 
 This repository includes a **synthetic subgraph-detection dataset** used for benchmarking graph models for the pattern detection task. The graphs and labels are generated following the pseudocode/configurations described in _Provably Powerful Graph Neural Networks for Directed Multigraphs_ (Egressy et al.).
 
-### What’s included
+### What’s Included
 
 - Three splits: **train**, **val**, **test**
 - Saved as PyTorch tensors under `./data/`:
@@ -13,6 +15,8 @@ This repository includes a **synthetic subgraph-detection dataset** used for ben
   - `y_sums.csv` — per-split counts of positive labels per sub-task
 
 - Per-split label percentages and mean across splits are stored under `./results/metrics/`, useful to sanity-check against the paper’s reported marginals
+
+### Label Tasks
 
 Each node is labeled for the presence of the following patterns (11 sub-tasks):
 
@@ -35,7 +39,7 @@ Graph instances are **reproducible**. A single `BASE_SEED` deterministically der
 - different graphs **within** a run for the splits,
 - identical graphs **across** runs with the same `BASE_SEED`.
 
-### Default generation settings
+### Default Generation Settings
 
 The default config (see the generator script `scripts/generate_synthetic.py`) follows the paper’s setup:
 
@@ -46,26 +50,39 @@ The default config (see the generator script `scripts/generate_synthetic.py`) fo
 - Generator: “chordal” / random-circulant-like
 - One connected component per split (prevents data leakage)
 
-### How to generate
+### How to Generate
 
 From the repo root:
 
 ```bash
-# 1) Generate graphs and labels
+# Generate graphs and labels
 python3 -m scripts.generate_synthetic
 ```
 
 After step (1), you’ll find `train.pt`, `val.pt`, `test.pt`, and `y_sums.csv` under `./data/`. The `label_percentages.csv` will be saved under `./results/metrics/`.
 
+---
+
 ## Principal Neighborhood Aggregation (PNA)
 
 PNA model is implemented by following the model architecture described in _Principal Neighbourhood Aggregation for Graph Nets_ (Corso et al.).
 
-### How to train the model
+### Train Baseline PNA
 
 From the repo root:
 
 ```bash
-# 2) Train and test PNA model on the generated graph data
+# Train and test PNA model on the generated graph data
+python3 -m scripts.train_pna_baseline
+```
+
+### Train PNA with Reverse Message Passing
+
+Training the `PNA model with Reverse Message Passing`, which utilizes a `Heterogeneous Graph`.
+
+From the repo root:
+
+```bash
+# Train and test PNA model on the generated graph data
 python3 -m scripts.train_pna_reverse_mp
 ```

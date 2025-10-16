@@ -1,6 +1,7 @@
 import os
 import torch
 from torch_geometric.loader import NeighborLoader
+from torch_geometric.data import HeteroData
 import copy
 
 DATA_PATH = "./data"
@@ -82,31 +83,66 @@ def make_reverse_neighbor_loader(data, num_neighbors=[15, 10, 5], batch_size=204
     return loader
 
 
+def _unpack_io(batch):
+    """
+    Helper method to unpack the batch into x_in, edge_in, y_true
+    by differentiating between homogeneous and heterogeneous graphs
+
+    Returns a tuple of (x_in, edge_in, y_true, num_nodes, is_hetero)
+      - if homogeneous: edge_in is a Tensor edge_index
+      - if hetero: edge_in is a dict {edge_type: edge_index}
+    """
+    is_hetero = isinstance(batch, HeteroData)
+    if is_hetero:
+        x_in = batch['n'].x
+        y_true = batch['n'].y
+        edge_in = {
+            ('n','fwd','n'): batch[('n','fwd','n')].edge_index,
+            ('n','rev','n'): batch[('n','rev','n')].edge_index,
+        }
+        num_nodes = int(batch['n'].num_nodes)
+    else:
+        x_in = batch.x
+        y_true = batch.y
+        edge_in = batch.edge_index
+        num_nodes = int(batch.num_nodes)
+    return x_in, edge_in, y_true, num_nodes, is_hetero
+
+
 def train_epoch(model, loader, optimizer, criterion, device):
+    """
+    This method can be used for training both homogeneous and heterogeneous graphs
+    """
     model.train()
     total_loss = 0.0
     total_nodes = 0
 
-    for data in loader:
-        data = data.to(device)
-        optimizer.zero_grad()
+    for batch in loader:
+        batch = batch.to(device)
+        x_in, edge_in, y_true, n_nodes, is_hetero = _unpack_io(batch)
 
-        out = model(data.x, data.edge_index) # Forward pass
-        loss = criterion(out, data.y.float())  # Binary cross-entropy loss for multi-label
+        optimizer.zero_grad()
+        # Hetero model expect dict inputs; homogeneous expects tensors
+        if is_hetero:
+            out = model(x_in, edge_in)     # (x_dict['n'], edge_index_dict)
+        else:
+            out = model(x_in, edge_in)     # (x, edge_index)
+
+        loss = criterion(out, y_true.float())
         loss.backward()
         optimizer.step()
-        
-        total_loss  += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
 
-    # Take the mean loss per node, per task
-    average_loss = total_loss / max(total_nodes, 1)
+        total_loss  += loss.item() * n_nodes
+        total_nodes += n_nodes
 
-    return average_loss
+    return total_loss / max(total_nodes, 1)
 
 
 @torch.no_grad()
 def evaluate_epoch(model, loader, criterion, device):
+    """
+    This method can be used for evaluating both homogeneous and heterogeneous graphs
+    """
     model.eval()
 
     total_loss = 0.0
@@ -117,26 +153,32 @@ def evaluate_epoch(model, loader, criterion, device):
     all_logits = []
     all_labels = []
 
-    for data in loader:
-        data = data.to(device)
-        out = model(data.x, data.edge_index)            
-        loss = criterion(out, data.y.float())    
+    for batch in loader:
+        batch = batch.to(device)
+        x_in, edge_in, y_true, n_nodes, is_hetero = _unpack_io(batch)
 
-        total_loss += loss.item() * int(data.num_nodes)
-        total_nodes += int(data.num_nodes)
+        if is_hetero:
+            out = model(x_in, edge_in)
+        else:
+            out = model(x_in, edge_in)
 
-        preds = (torch.sigmoid(out) > 0.5) # Turn logits into binary predictions
-        correct_pairs += (preds == data.y.bool()).sum().item()
-        total_pairs += data.y.numel()
+        loss = criterion(out, y_true.float())
+        total_loss += loss.item() * n_nodes
+        total_nodes += n_nodes
 
-        all_logits.append(out)
-        all_labels.append(data.y)
+        preds = (torch.sigmoid(out) > 0.5)
+        correct_pairs += (preds == y_true.bool()).sum().item()
+        total_pairs   += y_true.numel()
+
+        all_logits.append(out.detach().cpu())
+        all_labels.append(y_true.detach().cpu())
 
     avg_loss = total_loss / max(total_nodes, 1)
-    per_node_acc = correct_pairs / max(total_pairs, 1)  
+    per_node_acc = correct_pairs / max(total_pairs, 1)
 
     logits = torch.cat(all_logits, dim=0)
     labels = torch.cat(all_labels, dim=0)
+
     f1_score_per_task = compute_minority_f1_score_per_task(logits, labels)
 
     return avg_loss, per_node_acc, f1_score_per_task

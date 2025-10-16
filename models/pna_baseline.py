@@ -14,7 +14,6 @@ https://arxiv.org/abs/2306.11586
 
 __all__ = ["PNANet"]
 
-
 class PNANet(nn.Module):
     def __init__(
         self,

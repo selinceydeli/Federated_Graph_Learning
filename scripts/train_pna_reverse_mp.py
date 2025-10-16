@@ -7,55 +7,47 @@ from torch_geometric.utils import degree
 from utils.metrics import append_f1_score_to_csv, start_epoch_csv, append_epoch_csv
 from utils.seed import set_seed
 from utils.train_utils import load_datasets, ensure_node_features, train_epoch, evaluate_epoch
-from models.pna_reverse_mp import PNANet
+from utils.hetero import make_bidirected_hetero
+from models.pna_reverse_mp import PNANetReverseMP, compute_directional_degree_hists
 
 BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
 MODEL_NAME = "pna_reverse_mp"
- 
  
 def run_pna(seed, tasks, device):
     set_seed(seed)
 
     train_data, val_data, test_data = load_datasets()
 
-    # TODO: convert your graph into a heterogeneous graph
-
     # Assign constant features
     train_data = ensure_node_features(train_data)
     val_data = ensure_node_features(val_data)
     test_data = ensure_node_features(test_data)
 
-    # Create degree histograms in both directions
-    # Forward direction: message along original edges
-    d_fwd = degree(train_data.edge_index[1], num_nodes=train_data.num_nodes).long()
-    deg_fwd = torch.bincount(d_fwd, minlength=int(d_fwd.max()) + 1)
+    # Convert the data into HeteroData format
+    # using forward and backward edge relations
+    train_h = make_bidirected_hetero(train_data)
+    val_h   = make_bidirected_hetero(val_data)
+    test_h  = make_bidirected_hetero(test_data)
 
-    # Backward direction: message along reversed edges
-    reverse_index = train_data.edge_index[[1, 0], :]
-    d_bwd = degree(reverse_index[1], num_nodes=train_data.num_nodes).long()
-    deg_bwd = torch.bincount(d_bwd, minlength=int(d_bwd.max()) + 1)
+    # ---- Degree histograms per direction
+    deg_fwd_hist, deg_rev_hist = compute_directional_degree_hists(
+        edge_index=train_data.edge_index,  # original edges
+        num_nodes=train_data.num_nodes,
+    )
 
     # Define the model
-    in_dim = train_data.num_node_features if train_data.x is not None else 1
-    out_dim = train_data.y.size(-1)
-
-    # Define the layers
-    num_layers = 6
-    forward_num = num_layers // 2
-    backward_num = num_layers - forward_num
-
-    direction_schedule = ["forward"] * forward_num + ["backward"] * backward_num
-    print("Direction schedule:", direction_schedule)
+    in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
+    out_dim = train_h['n'].y.size(-1)
     
-    model = PNANet(
+    model = PNANetReverseMP(
         in_dim=in_dim,
         hidden_dim=64,
         out_dim=out_dim,
-        deg_forward=deg_fwd,
-        deg_backward=deg_bwd,
+        deg_fwd=deg_fwd_hist,
+        deg_rev=deg_rev_hist,
         num_layers=6,
         dropout=0.1,
-        direction_schedule=direction_schedule,
+        combine="sum",   # other aggregation options: 'mean' or 'max'
     ).to(device)
 
     # Load the datasets
@@ -90,13 +82,13 @@ def run_pna(seed, tasks, device):
 
         if val_loss < best_val:
             best_val = val_loss
-            torch.save(model.state_dict(), os.path.join(BEST_MODEL_PATH, f"best_pna_seed{seed}.pt"))
+            torch.save(model.state_dict(), os.path.join(BEST_MODEL_PATH, f"best_pna_reverse_mp_seed{seed}.pt"))
 
         if epoch % 10 == 0:
             print(f"[seed {seed}] Epoch {epoch:03d} | train {train_loss:.4f} | val {val_loss:.4f} | val macro-minF1 {100*val_macro:.2f}%")
 
     # Save the best model and evaluate on test dataset
-    model.load_state_dict(torch.load(os.path.join(BEST_MODEL_PATH, f"best_pna_seed{seed}.pt"), map_location=device))
+    model.load_state_dict(torch.load(os.path.join(BEST_MODEL_PATH, f"best_pna_reverse_mp_seed{seed}.pt"), map_location=device))
     test_loss, _, test_f1 = evaluate_epoch(model, test_loader, criterion, device)
     return test_loss, test_f1  
 
@@ -118,7 +110,7 @@ def main():
     std_f1  = all_f1.std(dim=0, unbiased=False)
 
     macro_mean = mean_f1.mean().item()*100
-    print(f"\nPNA reverse message passing — macro minority F1 over 5 runs: {macro_mean:.2f}%")
+    print(f"\nPNA iterative reverse message passing — macro minority F1 over 5 runs: {macro_mean:.2f}%")
 
     row = " | ".join(f"{n}: {100*m:.2f}±{100*s:.2f}%" for n, m, s in zip(tasks, mean_f1.tolist(), std_f1.tolist()))
     print("Per-task (mean±std over 5 runs):", row)
@@ -131,7 +123,7 @@ def main():
         std_f1=std_f1,
         macro_mean_percent=macro_mean,
         seeds=seeds,
-        model_name="PNA reverse message passing",
+        model_name="PNA iterative reverse MP",
     )
 
 
