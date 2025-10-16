@@ -38,6 +38,9 @@ def run_pna(seed, tasks, device):
     # Define the model
     in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
     out_dim = train_h['n'].y.size(-1)
+
+    # Define the number of layers
+    num_layers = 3
     
     model = PNANetReverseMP(
         in_dim=in_dim,
@@ -45,16 +48,15 @@ def run_pna(seed, tasks, device):
         out_dim=out_dim,
         deg_fwd=deg_fwd_hist,
         deg_rev=deg_rev_hist,
-        num_layers=6,
+        num_layers=num_layers,
         dropout=0.1,
         combine="sum",   # other aggregation options: 'mean' or 'max'
     ).to(device)
 
-    # Load the datasets
-    # Note: Because we currently have only 1 graph per split, there is no need for batching.
-    train_loader = [train_data]
-    valid_loader = [val_data]
-    test_loader  = [test_data]
+    # Load the hetero datasets
+    train_loader = [train_h]
+    valid_loader = [val_h]
+    test_loader  = [test_h]
 
     # Define optimizer and loss functions
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4) # Define optimizer as Adam

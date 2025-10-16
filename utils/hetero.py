@@ -1,4 +1,4 @@
-# utils/hetero.py
+#!/usr/bin/env python3
 from torch_geometric.data import HeteroData
 import torch
 

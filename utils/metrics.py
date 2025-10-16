@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os, csv
 from datetime import datetime
 import pandas as pd

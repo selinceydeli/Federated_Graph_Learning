@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import os
 import torch
 from torch_geometric.loader import NeighborLoader
