@@ -40,7 +40,8 @@ def run_pna(seed, tasks, device):
     out_dim = train_h['n'].y.size(-1)
 
     # Define the number of layers
-    num_layers = 3
+    num_layers = 2
+    print(f"Number of layers using in training: {num_layers}")
     
     model = PNANetReverseMP(
         in_dim=in_dim,
