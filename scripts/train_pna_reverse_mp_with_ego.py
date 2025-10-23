@@ -2,7 +2,7 @@
 import os
 import torch
 import torch.nn as nn
-from torch_geometric.loader import HeteroNeighborLoader
+from torch_geometric.loader import NeighborLoader
 
 from utils.metrics import append_f1_score_to_csv, start_epoch_csv, append_epoch_csv
 from utils.seed import set_seed
@@ -15,10 +15,11 @@ BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp_with_ego"
 MODEL_NAME = "pna_reverse_mp_with_ego"
 
 # Train configs
-BATCH_SIZE = 64
+USE_EGO_IDS = True
+BATCH_SIZE = 32
 EGO_DIM = BATCH_SIZE 
 
-def build_hetero_neighbor_loader(hetero_data, batch_size, num_layers, fanout):
+def build_hetero_neighbor_loader(hetero_data, batch_size, num_layers, fanout, device=None):
     """
     Creates mini-batches of seed nodes (the first batch_size nodes) and their sampled neighbors.
 
@@ -38,13 +39,21 @@ def build_hetero_neighbor_loader(hetero_data, batch_size, num_layers, fanout):
         ('n','rev','n'): fanout_list,
     }
 
-    return HeteroNeighborLoader(
+    use_cuda = (device is not None and device.type == "cuda")
+    num_workers = max(1, os.cpu_count() // 2)
+
+    return NeighborLoader(
         hetero_data,
         num_neighbors=num_neighbors,
-        input_nodes=('n', torch.arange(hetero_data['n'].num_nodes)),  # or a mask
+        input_nodes=('n', torch.arange(hetero_data['n'].num_nodes)),
         batch_size=batch_size,
         shuffle=True,
         drop_last=False,
+        pin_memory=use_cuda,                 # speeds host→GPU copy
+        num_workers=num_workers,             # parallel sampling
+        persistent_workers=True,             # keep workers alive
+        prefetch_factor=2,                   # overlap next batch
+        filter_per_worker=True,              # filter on worker side (PyG>=2.3)
     )
 
 
@@ -79,6 +88,11 @@ def run_pna(seed, tasks, device):
     # Best number of layers found so far is 2
     num_layers = 2      
     print(f"Number of layers using in training: {num_layers}")
+
+    if USE_EGO_IDS:
+        ego_dim = EGO_DIM
+    else:
+        ego_dim = 0
     
     model = PNANetReverseMP(
         in_dim=in_dim,
@@ -88,17 +102,17 @@ def run_pna(seed, tasks, device):
         deg_rev=deg_rev_hist,
         num_layers=num_layers,
         dropout=0.1,
-        ego_dim=EGO_DIM, # pass ego dimension
+        ego_dim=ego_dim, # pass ego dimension
         combine="sum",   # other aggregation options: 'mean' or 'max'
     ).to(device)
 
     # Load the hetero datasets
     # Use hetero neighbor loader for the training data
-    train_loader = build_hetero_neighbor_loader(train_h, BATCH_SIZE, num_layers, fanout=15)
+    train_loader = build_hetero_neighbor_loader(train_h, BATCH_SIZE, num_layers, fanout=[10, 4], device=device) # 1st hop 10, 2nd hop 4
 
     # For validation and test, again use hetero neighbor loader for consistency
-    valid_loader = build_hetero_neighbor_loader(val_h,   BATCH_SIZE, num_layers, fanout=15)
-    test_loader  = build_hetero_neighbor_loader(test_h,  BATCH_SIZE, num_layers, fanout=15)
+    valid_loader = build_hetero_neighbor_loader(val_h,   BATCH_SIZE, num_layers, fanout=[10, 4], device=device)
+    test_loader  = build_hetero_neighbor_loader(test_h,  BATCH_SIZE, num_layers, fanout=[10, 4], device=device)
 
     # Define optimizer and loss functions
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4) # Define optimizer as Adam
@@ -128,8 +142,8 @@ def run_pna(seed, tasks, device):
             best_val = val_loss
             torch.save(model.state_dict(), os.path.join(BEST_MODEL_PATH, f"best_pna_reverse_mp_seed{seed}.pt"))
 
-        if epoch % 10 == 0:
-            print(f"[seed {seed}] Epoch {epoch:03d} | train {train_loss:.4f} | val {val_loss:.4f} | val macro-minF1 {100*val_macro:.2f}%")
+        # Print training and validation results after each epoch
+        print(f"[seed {seed}] Epoch {epoch:03d} | train {train_loss:.4f} | val {val_loss:.4f} | val macro-minF1 {100*val_macro:.2f}%")
 
     # Save the best model and evaluate on test dataset
     model.load_state_dict(torch.load(os.path.join(BEST_MODEL_PATH, f"best_pna_reverse_mp_seed{seed}.pt"), map_location=device))

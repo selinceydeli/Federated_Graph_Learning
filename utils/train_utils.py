@@ -94,7 +94,7 @@ def _unpack_io(batch):
     """
     is_hetero = isinstance(batch, HeteroData)
     if is_hetero:
-        x_in = batch['n'].x
+        x_in = {'n': batch['n'].x}  # x_in should be a dict for hetero
         y_true = batch['n'].y
         edge_in = {
             ('n','fwd','n'): batch[('n','fwd','n')].edge_index,
@@ -173,7 +173,13 @@ def train_epoch(model, loader, optimizer, criterion, device):
             x_in, y_true, batch, is_hetero, model
         )
 
-        # Print a sanity check info once for the first batch only
+        # Print training mode (full-batch or mini-batch)
+        if not getattr(model, "_mode_printed", False):
+            mode = "mini-batch (seed-only)" if B is not None else "full-batch"
+            print(f"[TRAIN MODE] {mode} | is_hetero={is_hetero} | ego_dim={getattr(model,'ego_dim',0)}")
+            model._mode_printed = True
+
+        # Print input dimensions as a sanity check
         if not getattr(model, "_ego_dbg_printed", False):
             base_dim = x_in['n'].shape[-1] if is_hetero else x_in.shape[-1]
             aug_dim  = x_in_aug['n'].shape[-1] if is_hetero else x_in_aug.shape[-1]
