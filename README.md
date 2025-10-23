@@ -78,11 +78,11 @@ python3 -m scripts.train_pna_baseline
 
 ### Train PNA with Reverse Message Passing
 
-Training the `PNA model with Reverse Message Passing`, which utilizes a `Heterogeneous Graph`.
+Training the `PNA model with Reverse Message Passing`, which uses a `Heterogeneous Graph` and `Ego IDs` to detect the fraud patterns listed under [Label Tasks](#label-tasks).
 
 From the repo root:
 
 ```bash
 # Train and test PNA model on the generated graph data
-python3 -m scripts.train_pna_reverse_mp
+python3 -m scripts.train_pna_reverse_mp_with_ego
 ```
