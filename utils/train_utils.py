@@ -7,7 +7,6 @@ import copy
 
 DATA_PATH = "./data"
 
-
 def load_datasets(log_dir=DATA_PATH, train_data_file="train.pt", val_data_file="val.pt", test_data_file="test.pt"):
     train = torch.load(os.path.join(log_dir, train_data_file), weights_only=False, map_location="cpu")
     val= torch.load(os.path.join(log_dir, val_data_file), weights_only=False, map_location="cpu")
@@ -101,7 +100,7 @@ def _unpack_io(batch):
             ('n','fwd','n'): batch[('n','fwd','n')].edge_index,
             ('n','rev','n'): batch[('n','rev','n')].edge_index,
         }
-        num_nodes = int(batch['n'].num_nodes)
+        num_nodes = int(getattr(batch['n'], 'num_nodes', 0) or batch['n'].x.size(0))
     else:
         x_in = batch.x
         y_true = batch.y
@@ -110,33 +109,91 @@ def _unpack_io(batch):
     return x_in, edge_in, y_true, num_nodes, is_hetero
 
 
+def _augment_with_ego_and_get_seed_slice(x_in, y_true, batch, is_hetero, model):
+    """
+    - If the model has `ego_dim > 0`, concatenate an Ego one-hot of width `ego_dim`
+      to node features.
+    - Detect number of seeds B (first B nodes) if available and return the seed slice.
+    - Returns: x_in_aug (same type as x_in), y_used (sliced to seeds if B known), B (int or None)
+    """
+    # Detect seed count B (NeighborLoader puts seeds first)
+    B = None
+    if is_hetero and hasattr(batch['n'], 'batch_size'):
+        B = int(batch['n'].batch_size)
+    elif not is_hetero and hasattr(batch, 'batch_size'):
+        B = int(batch.batch_size)
+
+    # If no Ego support on the model, just seed-slice labels and return
+    ego_dim = int(getattr(model, 'ego_dim', 0))
+    if ego_dim <= 0:
+        y_used = y_true[:B] if B is not None else y_true
+        return x_in, y_used, B
+
+    # Build Ego one-hots and concatenate
+    if is_hetero:
+        # x_in is a dict with key 'n'
+        x = x_in['n']
+        device = x.device
+        ego = torch.zeros((x.size(0), ego_dim), device=device)
+        if B is not None and B > 0:
+            k = min(B, ego_dim)
+            idx = torch.arange(k, device=device)
+            ego[idx, idx] = 1.0
+        x_aug = torch.cat([x, ego], dim=-1)
+        x_in_aug = {'n': x_aug}
+    else:
+        # homogeneous tensor
+        x = x_in
+        device = x.device
+        ego = torch.zeros((x.size(0), ego_dim), device=device)
+        if B is not None and B > 0:
+            k = min(B, ego_dim)
+            idx = torch.arange(k, device=device)
+            ego[idx, idx] = 1.0
+        x_in_aug = torch.cat([x, ego], dim=-1)
+
+    y_used = y_true[:B] if B is not None else y_true
+    return x_in_aug, y_used, B
+
+
 def train_epoch(model, loader, optimizer, criterion, device):
     """
     This method can be used for training both homogeneous and heterogeneous graphs
     """
     model.train()
-    total_loss = 0.0
-    total_nodes = 0
+    total_loss  = 0.0
+    total_count = 0
 
     for batch in loader:
         batch = batch.to(device)
         x_in, edge_in, y_true, n_nodes, is_hetero = _unpack_io(batch)
 
-        optimizer.zero_grad()
-        # Hetero model expect dict inputs; homogeneous expects tensors
-        if is_hetero:
-            out = model(x_in, edge_in)     # (x_dict['n'], edge_index_dict)
-        else:
-            out = model(x_in, edge_in)     # (x, edge_index)
+        # Add Ego (if enabled) and slice labels to seeds (if B known)
+        x_in_aug, y_used, B = _augment_with_ego_and_get_seed_slice(
+            x_in, y_true, batch, is_hetero, model
+        )
 
-        loss = criterion(out, y_true.float())
+        # Print a sanity check info once for the first batch only
+        if not getattr(model, "_ego_dbg_printed", False):
+            base_dim = x_in['n'].shape[-1] if is_hetero else x_in.shape[-1]
+            aug_dim  = x_in_aug['n'].shape[-1] if is_hetero else x_in_aug.shape[-1]
+            ego_dim  = int(getattr(model, "ego_dim", 0))
+            print(f"[EGO-CHECK] base_dim={base_dim}  ego_dim={ego_dim}  aug_dim={aug_dim}  seeds(B)={B}")
+            model._ego_dbg_printed = True
+
+        optimizer.zero_grad()
+        out = model(x_in_aug, edge_in)  # works for both paths
+        out_used = out[:B] if B is not None else out
+
+        loss = criterion(out_used, y_used.float())
         loss.backward()
         optimizer.step()
 
-        total_loss  += loss.item() * n_nodes
-        total_nodes += n_nodes
+        count = (B if B is not None else n_nodes)
+        total_loss  += loss.item() * count
+        total_count += count
 
-    return total_loss / max(total_nodes, 1)
+    return total_loss / max(total_count, 1)
 
 
 @torch.no_grad()
@@ -147,7 +204,7 @@ def evaluate_epoch(model, loader, criterion, device):
     model.eval()
 
     total_loss = 0.0
-    total_nodes = 0
+    total_count = 0
     total_pairs = 0
     correct_pairs = 0
 
@@ -158,28 +215,30 @@ def evaluate_epoch(model, loader, criterion, device):
         batch = batch.to(device)
         x_in, edge_in, y_true, n_nodes, is_hetero = _unpack_io(batch)
 
-        if is_hetero:
-            out = model(x_in, edge_in)
-        else:
-            out = model(x_in, edge_in)
+        x_in_aug, y_used, B = _augment_with_ego_and_get_seed_slice(
+            x_in, y_true, batch, is_hetero, model
+        )
 
-        loss = criterion(out, y_true.float())
-        total_loss += loss.item() * n_nodes
-        total_nodes += n_nodes
+        out = model(x_in_aug, edge_in)
+        out_used = out[:B] if B is not None else out
 
-        preds = (torch.sigmoid(out) > 0.5)
-        correct_pairs += (preds == y_true.bool()).sum().item()
-        total_pairs   += y_true.numel()
+        loss = criterion(out_used, y_used.float())
+        count = (B if B is not None else n_nodes)
+        total_loss  += loss.item() * count
+        total_count += count
 
-        all_logits.append(out.detach().cpu())
-        all_labels.append(y_true.detach().cpu())
+        preds = (torch.sigmoid(out_used) > 0.5)
+        correct_pairs += (preds == y_used.bool()).sum().item()
+        total_pairs   += y_used.numel()
 
-    avg_loss = total_loss / max(total_nodes, 1)
+        all_logits.append(out_used.detach().cpu())
+        all_labels.append(y_used.detach().cpu())
+
+    avg_loss = total_loss / max(total_count, 1)
     per_node_acc = correct_pairs / max(total_pairs, 1)
 
     logits = torch.cat(all_logits, dim=0)
     labels = torch.cat(all_labels, dim=0)
-
     f1_score_per_task = compute_minority_f1_score_per_task(logits, labels)
 
     return avg_loss, per_node_acc, f1_score_per_task
