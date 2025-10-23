@@ -20,9 +20,10 @@ class PNANet(nn.Module):
         in_dim: int,
         hidden_dim: int,
         out_dim: int,
-        deg,  # degree histogram tensor for PNA
+        deg,                    # degree histogram tensor for PNA
         num_layers: int = 6,
         dropout: float = 0.1,
+        ego_dim:int = 0,        # pass ego-ID dimension
         aggregators=None,
         scalers=None,
         towers: int = 4,
@@ -32,17 +33,13 @@ class PNANet(nn.Module):
     ):
         super().__init__()
 
-        aggregators = ['mean', 'min', 'max', 'std']
-        scalers = ['amplification', 'attenuation', 'identity']
-
-        self.input = nn.Linear(in_dim, hidden_dim)
-
         if aggregators is None:
             aggregators = ["mean", "min", "max", "std"]
         if scalers is None:
             scalers = ["amplification", "attenuation", "identity"]
 
-        self.input = nn.Linear(in_dim, hidden_dim)
+        self.ego_dim = int(ego_dim)
+        self.input = nn.Linear(in_dim + self.ego_dim, hidden_dim)
 
         # num_layers of the form: PNAConv -> BN -> ReLU -> Dropout 
         self.convs = nn.ModuleList([

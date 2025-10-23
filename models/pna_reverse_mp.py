@@ -20,10 +20,11 @@ class PNANetReverseMP(nn.Module):
         in_dim: int,
         hidden_dim: int,
         out_dim: int,
-        deg_fwd,  # histogram for in-degrees w.r.t. fwd edges
-        deg_rev,  # histogram for in-degrees w.r.t. rev edges
+        deg_fwd,                # histogram for in-degrees w.r.t. fwd edges
+        deg_rev,                # histogram for in-degrees w.r.t. rev edges
         num_layers: int = 6,
         dropout: float = 0.1,
+        ego_dim:int = 0,        # pass ego-ID dimension
         aggregators=None,
         scalers=None,
         towers: int = 4,
@@ -38,7 +39,8 @@ class PNANetReverseMP(nn.Module):
         if scalers is None:
             scalers = ["amplification", "attenuation", "identity"]
 
-        self.input = nn.Linear(in_dim, hidden_dim)
+        self.ego_dim = int(ego_dim)
+        self.input = nn.Linear(in_dim + self.ego_dim, hidden_dim)
         self.dropout = dropout
 
         self.convs = nn.ModuleList()
