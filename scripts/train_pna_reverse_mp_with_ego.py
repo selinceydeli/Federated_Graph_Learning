@@ -11,8 +11,8 @@ from utils.hetero import make_bidirected_hetero
 from models.pna_reverse_mp import PNANetReverseMP, compute_directional_degree_hists
 
 # Model configs
-BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
-MODEL_NAME = "pna_reverse_mp"
+BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp_with_ego"
+MODEL_NAME = "pna_reverse_mp_with_ego"
 
 # Train configs
 BATCH_SIZE = 64

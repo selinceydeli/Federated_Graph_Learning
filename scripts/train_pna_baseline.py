@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 import os
-import random
-import numpy as np
 import torch
 import torch.nn as nn
 from torch_geometric.utils import degree
