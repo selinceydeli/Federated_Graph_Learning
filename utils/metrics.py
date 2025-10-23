@@ -4,7 +4,6 @@ from datetime import datetime
 import pandas as pd
 from pathlib import Path
 
-
 def compute_label_percentages(
     input_csv = "./data/y_sums.csv",
     output_csv = "./results/metrics/label_percentages.csv",

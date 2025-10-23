@@ -168,7 +168,7 @@ def main():
     std_f1  = all_f1.std(dim=0, unbiased=False)
 
     macro_mean = mean_f1.mean().item()*100
-    print(f"\nPNA iterative reverse message passing — macro minority F1 over 5 runs: {macro_mean:.2f}%")
+    print(f"\nPNA reverse message passing with ego IDs — macro minority F1 over 5 runs: {macro_mean:.2f}%")
 
     row = " | ".join(f"{n}: {100*m:.2f}±{100*s:.2f}%" for n, m, s in zip(tasks, mean_f1.tolist(), std_f1.tolist()))
     print("Per-task (mean±std over 5 runs):", row)
@@ -181,7 +181,7 @@ def main():
         std_f1=std_f1,
         macro_mean_percent=macro_mean,
         seeds=seeds,
-        model_name="PNA iterative reverse MP",
+        model_name="PNA reverse MP with ego IDs",
     )
 
 
