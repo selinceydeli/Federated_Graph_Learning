@@ -3,6 +3,7 @@ import os
 import torch
 import torch.nn as nn
 from torch_geometric.utils import degree
+from torch_geometric.loader import HeteroNeighborLoader
 
 from utils.metrics import append_f1_score_to_csv, start_epoch_csv, append_epoch_csv
 from utils.seed import set_seed
@@ -10,9 +11,44 @@ from utils.train_utils import load_datasets, ensure_node_features, train_epoch, 
 from utils.hetero import make_bidirected_hetero
 from models.pna_reverse_mp import PNANetReverseMP, compute_directional_degree_hists
 
+# Model configs
 BEST_MODEL_PATH = "./checkpoints/pna_reverse_mp"
 MODEL_NAME = "pna_reverse_mp"
- 
+
+# Train configs
+BATCH_SIZE = 64
+EGO_DIM = BATCH_SIZE 
+
+def build_hetero_neighbor_loader(hetero_data, batch_size, num_layers, fanout):
+    """
+    Creates mini-batches of seed nodes (the first batch_size nodes) and their sampled neighbors.
+
+    Parameters:
+    - hetero_data: HeteroData object
+    - batch_size: number of seed nodes
+    - num_layers: number of hops 
+    - fanout: number of neighbors per hop, e.g. 15 (or a tuple/list per hop)
+    """
+    if isinstance(fanout, int):
+        fanout_list = [fanout] * num_layers
+    else:
+        fanout_list = list(fanout)  # e.g. [20, 15, 10] if num_layers=3
+
+    num_neighbors = {
+        ('n','fwd','n'): fanout_list,
+        ('n','rev','n'): fanout_list,
+    }
+
+    return HeteroNeighborLoader(
+        hetero_data,
+        num_neighbors=num_neighbors,
+        input_nodes=('n', torch.arange(hetero_data['n'].num_nodes)),  # or a mask
+        batch_size=batch_size,
+        shuffle=True,
+        drop_last=False,
+    )
+
+
 def run_pna(seed, tasks, device):
     set_seed(seed)
 
@@ -29,18 +65,21 @@ def run_pna(seed, tasks, device):
     val_h   = make_bidirected_hetero(val_data)
     test_h  = make_bidirected_hetero(test_data)
 
-    # ---- Degree histograms per direction
+    # PNA degree histograms per direction
+    # computed once on the full training graph (before small batches are sampled)
     deg_fwd_hist, deg_rev_hist = compute_directional_degree_hists(
         edge_index=train_data.edge_index,  # original edges
         num_nodes=train_data.num_nodes,
     )
 
     # Define the model
-    in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
+    base_in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
+    in_dim = base_in_dim + EGO_DIM         # concatenate ego one-hots
     out_dim = train_h['n'].y.size(-1)
 
     # Define the number of layers
-    num_layers = 2
+    # Best number of layers found so far is 2
+    num_layers = 2      
     print(f"Number of layers using in training: {num_layers}")
     
     model = PNANetReverseMP(
@@ -55,9 +94,12 @@ def run_pna(seed, tasks, device):
     ).to(device)
 
     # Load the hetero datasets
-    train_loader = [train_h]
-    valid_loader = [val_h]
-    test_loader  = [test_h]
+    # Use hetero neighbor loader for the training data
+    train_loader = build_hetero_neighbor_loader(train_h, BATCH_SIZE, num_layers, fanout=15)
+
+    # For validation and test, again use hetero neighbor loader for consistency
+    valid_loader = build_hetero_neighbor_loader(val_h,   BATCH_SIZE, num_layers, fanout=15)
+    test_loader  = build_hetero_neighbor_loader(test_h,  BATCH_SIZE, num_layers, fanout=15)
 
     # Define optimizer and loss functions
     optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-4) # Define optimizer as Adam
