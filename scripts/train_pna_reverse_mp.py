@@ -2,7 +2,6 @@
 import os
 import torch
 import torch.nn as nn
-from torch_geometric.utils import degree
 from torch_geometric.loader import HeteroNeighborLoader
 
 from utils.metrics import append_f1_score_to_csv, start_epoch_csv, append_epoch_csv
@@ -73,8 +72,7 @@ def run_pna(seed, tasks, device):
     )
 
     # Define the model
-    base_in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
-    in_dim = base_in_dim + EGO_DIM         # concatenate ego one-hots
+    in_dim = train_h['n'].x.size(-1) if 'x' in train_h['n'] else 1
     out_dim = train_h['n'].y.size(-1)
 
     # Define the number of layers
@@ -90,6 +88,7 @@ def run_pna(seed, tasks, device):
         deg_rev=deg_rev_hist,
         num_layers=num_layers,
         dropout=0.1,
+        ego_dim=EGO_DIM, # pass ego dimension
         combine="sum",   # other aggregation options: 'mean' or 'max'
     ).to(device)
 
